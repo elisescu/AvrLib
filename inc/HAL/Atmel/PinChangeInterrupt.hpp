@@ -7,10 +7,10 @@
 namespace HAL {
 namespace Atmel {
 
-template <typename pcintInfo, uint8_t bitmask>
+template <typename pcintInfo, uint8_t bit>
 class PinChangeSupport {
-	typedef Logging::Log<Loggers::PinChangeInterrupt> log;
-    static constexpr uint8_t PCIE = _BV(pcintInfo::PCIE);
+    static constexpr uint8_t bitmask = 1 << bit;
+    typedef Logging::Log<Loggers::PinChangeInterrupt> log;
 
     static uint8_t last;
     static uint8_t rising;
@@ -26,28 +26,29 @@ class PinChangeSupport {
     static void enablePCINT() {
         AtomicScope _;
 
-        if ((PCICR & PCIE) == 0) {
-            last = *pcintInfo::pin;
-            PCICR |= PCIE;
+
+        if (pcintInfo::PCIE.isCleared()) {
+            last = pcintInfo::PIN;
+            pcintInfo::PCIE.set();
         }
     }
 
     static inline __attribute__((always_inline)) void disablePCINTIfNeeded() {
         AtomicScope _;
 
-        if (*pcintInfo::pcmsk == 0) { // no more handlers are registered
-            PCICR &= ~PCIE;
+        if (pcintInfo::PCMSK == 0) { // no more handlers are registered
+        	pcintInfo::PCIE.clear();
         }
     }
 
 public:
-    static volatile uint8_t ints;
+    //static volatile uint8_t ints;
 
     template <typename body_t>
     static inline __attribute__((always_inline)) void wrap(body_t body) {
     	log::timeStart();
-    	ints++;
-        uint8_t now = *pcintInfo::pin;
+    	//ints++;
+        uint8_t now = pcintInfo::PIN;
         if (shouldInvoke(now)) {
             body();
         }
@@ -58,38 +59,38 @@ public:
     static void interruptOnChange() {
         directional &= ~bitmask;
         enablePCINT();
-        *pcintInfo::pcmsk |= bitmask;
+        typedef typename decltype(pcintInfo::PCMSK)::template Bit<bit> B;
+        B::set();
     }
 
     static void interruptOnRising() {
         rising |= bitmask;
         directional |= bitmask;
         enablePCINT();
-        *pcintInfo::pcmsk |= bitmask;
+        pcintInfo::PCMSK |= bitmask;
     }
 
     static void interruptOnFalling() {
         rising &= ~bitmask;
         directional |= bitmask;
         enablePCINT();
-        *pcintInfo::pcmsk |= bitmask;
+        pcintInfo::PCMSK |= bitmask;
     }
 
     __attribute__((always_inline)) inline static void interruptOff() {
-        *pcintInfo::pcmsk &= ~bitmask;
+        pcintInfo::PCMSK &= ~bitmask;
         disablePCINTIfNeeded();
     }
 };
 
-template <typename pcintInfo, uint8_t bitmask> uint8_t PinChangeSupport<pcintInfo,bitmask>::last = 0;
-template <typename pcintInfo, uint8_t bitmask> uint8_t PinChangeSupport<pcintInfo,bitmask>::rising = 0;
-template <typename pcintInfo, uint8_t bitmask> uint8_t PinChangeSupport<pcintInfo,bitmask>::directional = 0;
-template <typename pcintInfo, uint8_t bitmask> volatile uint8_t PinChangeSupport<pcintInfo,bitmask>::ints = 0;
+template <typename pcintInfo, uint8_t bit> uint8_t PinChangeSupport<pcintInfo,bit>::last = 0;
+template <typename pcintInfo, uint8_t bit> uint8_t PinChangeSupport<pcintInfo,bit>::rising = 0;
+template <typename pcintInfo, uint8_t bit> uint8_t PinChangeSupport<pcintInfo,bit>::directional = 0;
 
-template <typename pcintInfo, uint8_t bitmask>
+template <typename pcintInfo, uint8_t bit>
 struct PinChangeVector {
     typedef typename pcintInfo::PCINT INT;
-    typedef PinChangeSupport<pcintInfo, bitmask> support;
+    typedef PinChangeSupport<pcintInfo, bit> support;
 
     template <typename body_t>
     static __attribute__((always_inline)) inline void wrap(body_t body) {
@@ -97,10 +98,10 @@ struct PinChangeVector {
     }
 };
 
-template <typename pcintInfo, uint8_t bitmask>
+template <typename pcintInfo, uint8_t bit>
 class PinChangeInterrupt {
 public:
-    typedef PinChangeVector<pcintInfo, bitmask> INT;
+    typedef PinChangeVector<pcintInfo, bit> INT;
 
     /**
      * Invokes an attached interrupt handler whenever the pin changes value.
@@ -136,50 +137,47 @@ public:
     }
 };
 
-template <typename pcintInfo, uint8_t bitmask>
+template <typename pcintInfo, uint8_t bit>
 class PinChangeVectorOnChange {
-	typedef Logging::Log<Loggers::PinChangeInterrupt> log;
-    static constexpr uint8_t PCIE = _BV(pcintInfo::PCIE);
+    static constexpr uint8_t bitmask = 1 << bit;
+    typedef Logging::Log<Loggers::PinChangeInterrupt> log;
 
     static uint8_t last;
 
     static void enablePCINT() {
         AtomicScope _;
 
-        if ((PCICR & PCIE) == 0) {
-            last = *pcintInfo::pin;
-            PCICR |= PCIE;
+        if (pcintInfo::PCIE == 0) {
+            last = pcintInfo::PIN;
+            pcintInfo::PCIE.set();
         }
     }
 
     static inline __attribute__((always_inline)) void disablePCINTIfNeeded() {
         AtomicScope _;
 
-        if (*pcintInfo::pcmsk == 0) { // no more handlers are registered
-            PCICR &= ~PCIE;
+        if (pcintInfo::PCMSK == 0) { // no more handlers are registered
+            pcintInfo::PCIE.clear();
         }
     }
 public:
     // The actual interrupt this listens on
 	typedef typename pcintInfo::PCINT INT;
 
-    static volatile uint8_t ints;
-
     __attribute__((always_inline)) inline static void interruptOnChange() {
         enablePCINT();
-        *pcintInfo::pcmsk |= bitmask;
+        pcintInfo::PCMSK |= bitmask;
     }
 
     __attribute__((always_inline)) inline static void interruptOff() {
-    	*pcintInfo::pcmsk &= ~bitmask;
+    	pcintInfo::PCMSK &= ~bitmask;
 		disablePCINTIfNeeded();
     }
 
     template <typename body_t>
     static __attribute__((always_inline)) inline void wrap(body_t body) {
     	log::timeStart();
-    	ints++;
-        uint8_t now = *pcintInfo::pin;
+        uint8_t now = pcintInfo::PIN;
         uint8_t changed = now ^ last;
         if (changed & bitmask) {
             body();
@@ -189,13 +187,12 @@ public:
     }
 };
 
-template <typename pcintInfo, uint8_t bitmask> volatile uint8_t PinChangeVectorOnChange<pcintInfo, bitmask>::ints = 0;
-template <typename pcintInfo, uint8_t bitmask> uint8_t PinChangeVectorOnChange<pcintInfo, bitmask>::last = 0;
+template <typename pcintInfo, uint8_t bit> uint8_t PinChangeVectorOnChange<pcintInfo, bit>::last = 0;
 
-template <typename pcintInfo, uint8_t bitmask>
+template <typename pcintInfo, uint8_t bit>
 class PinChangeInterruptOnChange {
 public:
-    typedef PinChangeVectorOnChange<pcintInfo, bitmask> INT;
+    typedef PinChangeVectorOnChange<pcintInfo, bit> INT;
 
     /**
      * Invokes an attached interrupt handler whenever the pin changes value.
